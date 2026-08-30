@@ -1,0 +1,20 @@
+# 本地生成/下载的大数据文件不入库
+data/*.csv
+data/*.tsv
+data/*.log
+
+# Java 构建产物
+flink-job/target/
+*.class
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE / 系统
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

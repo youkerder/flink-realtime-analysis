@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>电商用户行为实时分析大屏</title>
+<script src="echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b1026; color: #dfe6ff; font-family: "Microsoft YaHei", sans-serif; }
+  .header { display: flex; justify-content: space-between; align-items: center;
+            padding: 14px 28px; border-bottom: 1px solid #1e2a55; }
+  .header h1 { font-size: 22px; letter-spacing: 2px; color: #7fb0ff; }
+  #status { font-size: 13px; color: #8a97c4; }
+  .cards { display: flex; gap: 16px; padding: 16px 28px; }
+  .card { flex: 1; background: #121a3a; border: 1px solid #223061; border-radius: 10px;
+          padding: 14px 18px; }
+  .card .label { font-size: 13px; color: #8a97c4; }
+  .card .value { font-size: 30px; font-weight: 700; margin-top: 6px; color: #ffffff; }
+  .card.buy .value { color: #ffd166; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 28px 24px; }
+  .chart { background: #121a3a; border: 1px solid #223061; border-radius: 10px; height: 330px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>电商用户行为实时分析</h1>
+  <div id="status">连接中...</div>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">近 1 分钟 PV</div><div class="value" id="c-pv">-</div></div>
+  <div class="card"><div class="label">近 1 分钟 UV</div><div class="value" id="c-uv">-</div></div>
+  <div class="card"><div class="label">加购 + 收藏</div><div class="value" id="c-intent">-</div></div>
+  <div class="card buy"><div class="label">近 1 分钟 购买</div><div class="value" id="c-buy">-</div></div>
+</div>
+
+<div class="grid">
+  <div id="chart-line" class="chart"></div>
+  <div id="chart-funnel" class="chart"></div>
+  <div id="chart-behavior" class="chart"></div>
+  <div id="chart-topn" class="chart"></div>
+</div>
+
+<script>
+const line = echarts.init(document.getElementById('chart-line'));
+const funnel = echarts.init(document.getElementById('chart-funnel'));
+const behavior = echarts.init(document.getElementById('chart-behavior'));
+const topn = echarts.init(document.getElementById('chart-topn'));
+
+async function query(q) {
+  const resp = await fetch('/clickhouse/?query=' + encodeURIComponent(q));
+  if (!resp.ok) throw new Error('ClickHouse ' + resp.status);
+  return resp.json();
+}
+
+async function refresh() {
+  try {
+    const metrics = await query(
+      'SELECT window_start, pv, uv, cart, fav, buy FROM rt.metrics_1min ORDER BY window_start DESC LIMIT 30 FORMAT JSON');
+    const rows = metrics.data.reverse();
+    const times = rows.map(r => r.window_start.slice(11, 16));
+
+    // 指标卡片（取最新窗口）
+    const last = rows[rows.length - 1];
+    if (last) {
+      document.getElementById('c-pv').textContent = Number(last.pv).toLocaleString();
+      document.getElementById('c-uv').textContent = Number(last.uv).toLocaleString();
+      document.getElementById('c-intent').textContent = (Number(last.cart) + Number(last.fav)).toLocaleString();
+      document.getElementById('c-buy').textContent = Number(last.buy).toLocaleString();
+      document.getElementById('status').textContent = '最新窗口: ' + last.window_start + '（每 5 秒刷新）';
+    }
+
+    // PV / UV 折线
+    line.setOption({
+      title: { text: 'PV / UV 趋势（近 30 分钟）', textStyle: { color: '#dfe6ff', fontSize: 15 } },
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['PV', 'UV'], textStyle: { color: '#8a97c4' }, top: 4 },
+      grid: { left: 60, right: 24, top: 44, bottom: 30 },
+      xAxis: { type: 'category', data: times, axisLabel: { color: '#8a97c4' } },
+      yAxis: { type: 'value', axisLabel: { color: '#8a97c4' }, splitLine: { lineStyle: { color: '#1e2a55' } } },
+      series: [
+        { name: 'PV', type: 'line', smooth: true, data: rows.map(r => Number(r.pv)),
+          lineStyle: { color: '#5b8ff9' }, itemStyle: { color: '#5b8ff9' }, areaStyle: { opacity: 0.15 } },
+        { name: 'UV', type: 'line', smooth: true, data: rows.map(r => Number(r.uv)),
+          lineStyle: { color: '#5ad8a6' }, itemStyle: { color: '#5ad8a6' } }
+      ]
+    });
+
+    // 转化漏斗（取最新窗口）
+    const funnelData = await query(
+      "SELECT stage, users FROM rt.funnel_1min WHERE window_start = (SELECT max(window_start) FROM rt.funnel_1min) FORMAT JSON");
+    const m = Object.fromEntries(funnelData.data.map(r => [r.stage, Number(r.users)]));
+    funnel.setOption({
+      title: { text: '转化漏斗（浏览 → 加购/收藏 → 购买）', textStyle: { color: '#dfe6ff', fontSize: 15 } },
+      tooltip: { trigger: 'item', formatter: '{b}: {c}' },
+      series: [{
+        type: 'funnel', left: '12%', width: '76%', top: 50, bottom: 20, sort: 'descending',
+        label: { color: '#0b1026', formatter: '{b}: {c}' },
+        data: [
+          { name: '浏览 pv', value: m['pv'] || 0 },
+          { name: '加购/收藏', value: m['cart_fav'] || 0 },
+          { name: '购买 buy', value: m['buy'] || 0 }
+        ]
+      }]
+    });
+
+    // 行为构成
+    if (last) {
+      behavior.setOption({
+        title: { text: '最新窗口行为构成', textStyle: { color: '#dfe6ff', fontSize: 15 } },
+        tooltip: {},
+        grid: { left: 70, right: 24, top: 44, bottom: 30 },
+        xAxis: { type: 'category', data: ['浏览 pv', '加购 cart', '收藏 fav', '购买 buy'],
+                 axisLabel: { color: '#8a97c4' } },
+        yAxis: { type: 'value', axisLabel: { color: '#8a97c4' }, splitLine: { lineStyle: { color: '#1e2a55' } } },
+        series: [{ type: 'bar', barWidth: '45%',
+          data: [
+            { value: Number(last.pv), itemStyle: { color: '#5b8ff9' } },
+            { value: Number(last.cart), itemStyle: { color: '#5ad8a6' } },
+            { value: Number(last.fav), itemStyle: { color: '#f6bd16' } },
+            { value: Number(last.buy), itemStyle: { color: '#e8684a' } }
+          ],
+          label: { show: true, position: 'top', color: '#dfe6ff' }
+        }]
+      });
+    }
+
+    // 商品热度 Top10
+    const topnData = await query(
+      "SELECT item_id, cnt FROM rt.item_topn_1min WHERE window_start = (SELECT max(window_start) FROM rt.item_topn_1min) ORDER BY cnt DESC LIMIT 10 FORMAT JSON");
+    const items = topnData.data.reverse();
+    topn.setOption({
+      title: { text: '商品热度 Top 10（最新窗口）', textStyle: { color: '#dfe6ff', fontSize: 15 } },
+      tooltip: {},
+      grid: { left: 110, right: 40, top: 44, bottom: 30 },
+      xAxis: { type: 'value', axisLabel: { color: '#8a97c4' }, splitLine: { lineStyle: { color: '#1e2a55' } } },
+      yAxis: { type: 'category', data: items.map(r => '商品 ' + r.item_id), axisLabel: { color: '#8a97c4' } },
+      series: [{ type: 'bar', data: items.map(r => Number(r.cnt)), barWidth: '55%',
+                itemStyle: { color: '#7fb0ff' },
+                label: { show: true, position: 'right', color: '#dfe6ff' } }]
+    });
+
+    document.getElementById('status').style.color = '#8a97c4';
+  } catch (e) {
+    document.getElementById('status').textContent = '数据加载失败: ' + e.message + '（5 秒后重试）';
+    document.getElementById('status').style.color = '#e8684a';
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+window.addEventListener('resize', () => [line, funnel, behavior, topn].forEach(c => c.resize()));
+</script>
+</body>
+</html>
