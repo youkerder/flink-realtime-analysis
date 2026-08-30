@@ -23,4 +23,6 @@ __pycache__/
 *.iml
 .DS_Store
 Thumbs.db
-retry_pulls.err/
+retry_pulls.err
+
+*.err
