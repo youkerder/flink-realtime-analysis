@@ -2,6 +2,12 @@
 
 基于 **Kafka + Flink + ClickHouse + ECharts** 的端到端实时数据处理链路：行为事件流经 Kafka 接入，Flink 以事件时间语义完成窗口聚合，结果落 ClickHouse，前端大屏 5 秒轮询实时刷新。已使用**阿里天池淘宝用户行为公开数据集**（约 1 亿条真实脱敏行为记录）完成端到端实测。
 
+## 实时大屏演示
+
+<video src="docs/dashboard-demo.mp4" controls muted width="100%"></video>
+
+> 录屏演示：ClickHouse 实时聚合 + ECharts 大屏（每 5 秒刷新）。若内嵌播放不可用，直接观看原始文件：[docs/dashboard-demo.mp4](docs/dashboard-demo.mp4)
+
 ## 架构
 
 ```mermaid
