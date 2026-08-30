@@ -71,10 +71,10 @@ flowchart LR
 
 ```
 cd /d D:\daimaxiangmu\flink-realtime-analysis
-wsl -e bash -c "cd /mnt/d/daimaxiangmu/flink-realtime-analysis/producer && python3 replay_producer.py --file ../data/user_behavior_10m.csv --rate 0 --bootstrap 127.0.0.1:9092"
+wsl -e bash -c "cd /mnt/d/daimaxiangmu/flink-realtime-analysis/producer && python3 replay_producer.py --file ~/userbehavior_tianchi.csv --rate 0 --bootstrap 127.0.0.1:9092"
 ```
 
-（首次使用 `python generate_dataset.py --rows 10000000` 生成数据；`--rate 0` 为全速）
+（数据集已随仓库提供；`--rate 0` 为全速回放）
 
 ### 查看大屏
 
@@ -101,10 +101,15 @@ docker exec jobmanager flink run -c com.example.realtime.RealtimeAnalysisJob \
 
 | 文件 | 用途 | 说明 |
 |------|------|------|
-| `data/user_behavior_10m.csv` | 全链路实测 | 1000 万行 UserBehavior 格式模拟数据 |
+| `data/UserBehavior.csv` | 全链路实测 | **阿里天池淘宝用户行为公开数据集**（约 1 亿条真实脱敏行为记录，2017-11-25 至 12-03） |
 | `data/shopping.csv` | 关联规则示例 | 购物篮事务数据 |
 
-`producer/generate_dataset.py` 多进程生成，支持亿级扩展，行为分布按真实场景重尾建模。
+> 数据集说明：UserBehavior 为阿里巴巴官方开源的真实脱敏数据（pv/cart/fav/buy 四类行为）。
+> 原始数据中混有少量脏时间戳记录（如 1902/2037 年），已在 Flink 解析层通过时间戳范围校验自动丢弃，
+> 校验逻辑见 `UserBehaviorDeserializer`。回放前需将数据复制到 WSL 家目录以获得更快的读取速度：
+> `wsl -e bash -c "cp /mnt/d/daimaxiangmu/flink-realtime-analysis/data/UserBehavior.csv ~/"`
+
+`producer/generate_dataset.py` 仍保留，用于在没有真实数据集时生成同格式的模拟数据。
 
 ## 项目结构
 

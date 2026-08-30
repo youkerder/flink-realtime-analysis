@@ -24,7 +24,7 @@ echo   All started:
 echo     Dashboard : http://localhost:8090
 echo     Flink UI  : http://localhost:8081
 echo   Replay data (any window):
-echo     wsl -e bash -c "cd /mnt/d/daimaxiangmu/flink-realtime-analysis/producer && python3 replay_producer.py --file ~/user_behavior_10m.csv --rate 0 --bootstrap 127.0.0.1:9092"
+echo     wsl -e bash -c "cd /mnt/d/daimaxiangmu/flink-realtime-analysis/producer && python3 replay_producer.py --file ~/userbehavior_tianchi.csv --rate 0 --bootstrap 127.0.0.1:9092"
 echo   This window can be closed. Stop: stop-all.cmd
 echo  ============================================
 timeout /t 15 >nul

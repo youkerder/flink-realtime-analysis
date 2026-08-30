@@ -36,10 +36,11 @@ def main():
     t0 = time.time()
     with open(args.file, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        header = next(reader, None)
-        assert header == ["user_id", "item_id", "category_id", "behavior", "timestamp"], f"数据格式不符: {header}"
         for row in reader:
-            user_id, item_id, category_id, behavior, ts = row
+            # 兼容无表头文件：首列不是数字的行（如表头）直接跳过
+            if len(row) < 5 or not row[0].strip().isdigit():
+                continue
+            user_id, item_id, category_id, behavior, ts = row[0], row[1], row[2], row[3], row[4]
             try:
                 producer.send(args.topic, key=user_id, value={
                     "user_id": int(user_id),
