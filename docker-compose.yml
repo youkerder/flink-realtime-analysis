@@ -4,6 +4,7 @@ services:
   kafka:
     image: bitnami/kafka:3.7
     container_name: kafka
+    restart: unless-stopped
     ports:
       - "9094:9094"
     environment:
@@ -56,9 +57,9 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: clickhouse
+    restart: unless-stopped
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8124:8123"
     ulimits:
       nofile:
         soft: 262144
@@ -66,10 +67,12 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/noauth.xml:/etc/clickhouse-server/users.d/noauth.xml:ro
 
   dashboard:
     image: nginx:alpine
     container_name: dashboard
+    restart: unless-stopped
     ports:
       - "8090:80"
     volumes:

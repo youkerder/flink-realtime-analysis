@@ -2,6 +2,11 @@
 data/*.csv
 data/*.tsv
 data/*.log
+runtime/
+*.tgz
+*.log
+kafka_pull*.err
+flink_pull*.err
 
 # Java 构建产物
 flink-job/target/
@@ -18,3 +23,4 @@ __pycache__/
 *.iml
 .DS_Store
 Thumbs.db
+retry_pulls.err/

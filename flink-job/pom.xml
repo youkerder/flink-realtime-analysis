@@ -12,7 +12,7 @@
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
         <flink.version>1.20.0</flink.version>
-        <clickhouse.jdbc.version>0.6.5</clickhouse.jdbc.version>
+        <clickhouse.jdbc.version>0.4.6</clickhouse.jdbc.version>
         <jdbc.connector.version>3.3.0-1.20</jdbc.connector.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
@@ -31,12 +31,11 @@
             <version>${flink.version}</version>
             <scope>provided</scope>
         </dependency>
-        <!-- Jackson 由 Flink 发行版内置（flink-shaded-jackson），provided -->
+        <!-- Jackson 打进 fat jar（Flink 发行版内置的是重定位包名，原包名不可用） -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
             <version>2.17.2</version>
-            <scope>provided</scope>
         </dependency>
 
         <!-- 以下依赖打进 fat jar -->

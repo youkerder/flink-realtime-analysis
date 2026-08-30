@@ -1,0 +1,10 @@
+<!-- 本地演示环境：default 用户免密（仅限本机使用） -->
+<clickhouse>
+    <users>
+        <default>
+            <password></password>
+            <networks><ip>::/0</ip></networks>
+            <access_management>1</access_management>
+        </default>
+    </users>
+</clickhouse>

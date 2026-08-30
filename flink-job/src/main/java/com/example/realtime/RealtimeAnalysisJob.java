@@ -62,17 +62,19 @@ public class RealtimeAnalysisJob {
                 .setDeserializer(new UserBehaviorDeserializer())
                 .build();
 
-        // 事件时间语义：允许 5 秒乱序，时间戳取事件秒级时间戳 * 1000
+        // 事件时间语义：允许 5 秒乱序，时间戳取事件秒级时间戳 * 1000；
+        // withIdleness 防止分区数 < Source 并行度时空闲子任务卡住全局 watermark
         WatermarkStrategy<UserBehavior> watermarks = WatermarkStrategy
                 .<UserBehavior>forBoundedOutOfOrderness(Duration.ofSeconds(5))
-                .withTimestampAssigner((event, ts) -> event.getTimestamp() * 1000L);
+                .withTimestampAssigner((event, ts) -> event.getTimestamp() * 1000L)
+                .withIdleness(Duration.ofSeconds(10));
 
         DataStream<UserBehavior> events = env.fromSource(source, watermarks, "kafka-source");
 
-        // ---------- 分支一：每分钟指标 + 漏斗 ----------
+        // ---------- 分支一：每分钟指标 + 漏斗（遍历窗口内记录现算，窗口内数据量小，无需增量状态） ----------
         SingleOutputStreamOperator<WindowResult> metrics = events
                 .windowAll(TumblingEventTimeWindows.of(Duration.ofMinutes(1)))
-                .aggregate(new BehaviorAggregate(), new MetricsWindowProcess())
+                .process(new MetricsWindowProcess())
                 .name("metrics-1min");
 
         metrics.addSink(JdbcSink.sink(
@@ -151,78 +153,46 @@ public class RealtimeAnalysisJob {
     }
 
     // ------------------------------------------------------------------
-    // 窗口聚合：指标 + 漏斗（增量聚合，窗口内只保存必要状态）
+    // 每分钟指标 + 转化漏斗：直接遍历窗口内全部记录计算
     // ------------------------------------------------------------------
-    public static class BehaviorAcc {
-        public long pv, cart, fav, buy;
-        public final Set<Long> users = new HashSet<>();          // UV：发生过任意行为的用户
-        public final Set<Long> pvUsers = new HashSet<>();        // 漏斗第一层：浏览用户
-        public final Set<Long> cartFavUsers = new HashSet<>();   // 漏斗第二层素材：加购或收藏用户
-        public final Set<Long> buyUsers = new HashSet<>();       // 漏斗第三层素材：购买用户
-    }
-
-    public static class BehaviorAggregate implements AggregateFunction<UserBehavior, BehaviorAcc, BehaviorAcc> {
+    public static class MetricsWindowProcess extends ProcessAllWindowFunction<UserBehavior, WindowResult, TimeWindow> {
         @Override
-        public BehaviorAcc createAccumulator() {
-            return new BehaviorAcc();
-        }
-
-        @Override
-        public BehaviorAcc add(UserBehavior e, BehaviorAcc acc) {
-            acc.users.add(e.getUserId());
-            switch (e.getBehavior()) {
-                case "pv":
-                    acc.pv++;
-                    acc.pvUsers.add(e.getUserId());
-                    break;
-                case "cart":
-                    acc.cart++;
-                    acc.cartFavUsers.add(e.getUserId());
-                    break;
-                case "fav":
-                    acc.fav++;
-                    acc.cartFavUsers.add(e.getUserId());
-                    break;
-                case "buy":
-                    acc.buy++;
-                    acc.buyUsers.add(e.getUserId());
-                    break;
-                default:
-                    break;
+        public void process(Context ctx, Iterable<UserBehavior> records, Collector<WindowResult> out) {
+            long pv = 0, cart = 0, fav = 0, buy = 0;
+            Set<Long> users = new HashSet<>();
+            Set<Long> pvUsers = new HashSet<>();
+            Set<Long> cartFavUsers = new HashSet<>();
+            Set<Long> buyUsers = new HashSet<>();
+            for (UserBehavior e : records) {
+                users.add(e.getUserId());
+                switch (e.getBehavior()) {
+                    case "pv":
+                        pv++;
+                        pvUsers.add(e.getUserId());
+                        break;
+                    case "cart":
+                        cart++;
+                        cartFavUsers.add(e.getUserId());
+                        break;
+                    case "fav":
+                        fav++;
+                        cartFavUsers.add(e.getUserId());
+                        break;
+                    case "buy":
+                        buy++;
+                        buyUsers.add(e.getUserId());
+                        break;
+                    default:
+                        break;
+                }
             }
-            return acc;
-        }
-
-        @Override
-        public BehaviorAcc getResult(BehaviorAcc acc) {
-            return acc;
-        }
-
-        @Override
-        public BehaviorAcc merge(BehaviorAcc a, BehaviorAcc b) {
-            a.pv += b.pv;
-            a.cart += b.cart;
-            a.fav += b.fav;
-            a.buy += b.buy;
-            a.users.addAll(b.users);
-            a.pvUsers.addAll(b.pvUsers);
-            a.cartFavUsers.addAll(b.cartFavUsers);
-            a.buyUsers.addAll(b.buyUsers);
-            return a;
-        }
-    }
-
-    public static class MetricsWindowProcess extends ProcessAllWindowFunction<BehaviorAcc, WindowResult, TimeWindow> {
-        @Override
-        public void process(Context ctx, Iterable<BehaviorAcc> input, Collector<WindowResult> out) {
-            BehaviorAcc acc = input.iterator().next();
             // 漏斗：第二层 = 浏览 且 (加购或收藏) 的用户数；第三层 = 浏览 且 购买 的用户数
-            long stage2 = acc.cartFavUsers.stream().filter(acc.pvUsers::contains).count();
-            long stage3 = acc.buyUsers.stream().filter(acc.pvUsers::contains).count();
+            long stage2 = cartFavUsers.stream().filter(pvUsers::contains).count();
+            long stage3 = buyUsers.stream().filter(pvUsers::contains).count();
             out.collect(new WindowResult(
                     ctx.window().getStart(), ctx.window().getEnd(),
-                    acc.pv, acc.users.size(), acc.cart, acc.fav, acc.buy,
-                    acc.pvUsers.size(), stage2, stage3));
+                    pv, users.size(), cart, fav, buy,
+                    pvUsers.size(), stage2, stage3));
         }
     }
 
