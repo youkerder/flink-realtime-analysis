@@ -48,7 +48,8 @@ public class RealtimeAnalysisJob {
     public static void main(String[] args) throws Exception {
         ParameterTool params = ParameterTool.fromArgs(args);
         String kafkaBootstrap = params.get("kafka", "kafka:9092");
-        String clickhouseUrl = params.get("clickhouse", "jdbc:clickhouse://clickhouse:8123/rt");
+        String topic = params.get("topic", "user_behavior");
+        String clickhouseUrl = params.get("clickhouse", "jdbc:clickhouse://localhost:8124/rt");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.enableCheckpointing(60_000, CheckpointingMode.EXACTLY_ONCE);
@@ -56,7 +57,7 @@ public class RealtimeAnalysisJob {
 
         KafkaSource<UserBehavior> source = KafkaSource.<UserBehavior>builder()
                 .setBootstrapServers(kafkaBootstrap)
-                .setTopics("user_behavior")
+                .setTopics(topic)
                 .setGroupId("realtime-analysis")
                 .setStartingOffsets(OffsetsInitializer.earliest())
                 .setDeserializer(new UserBehaviorDeserializer())
