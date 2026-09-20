@@ -50,7 +50,7 @@ flowchart LR
 |------|------|
 | 数据规模 | 100,150,807 条真实脱敏行为记录（2017-11-25 至 12-03，共 9 天，pv/cart/fav/buy 四类行为） |
 | 数据质量处理 | 原始数据混有的脏时间戳记录（1902/2037 年）在 Flink 解析层经范围校验自动丢弃 |
-| 聚合结果 | 覆盖数据集全量 9 天跨度共 12,960 个分钟窗口，无一遗漏 |
+| 聚合结果 | 流式侧覆盖数据集全量 9 天跨度共 12,960 个分钟窗口，无缺失；离线全量扫描按数据自然时间戳切分为 13,094 个窗口，两者相差 134 个，源于窗口边界对齐方式不同（预期内） |
 | 指标校验 | 各窗口 PV/UV、四类行为计数与原始数据逐条对账一致，行为分布与官方统计吻合 |
 | TopN 结果 | 每窗口商品热度 Top 100，覆盖全部窗口 |
 | 作业状态 | 全程 RUNNING，0 失败任务 |
@@ -76,11 +76,13 @@ flowchart LR
 新开一个窗口：
 
 ```
-cd /d D:\daimaxiangmu\flink-realtime-analysis
-wsl -e bash -c "cd /mnt/d/daimaxiangmu/flink-realtime-analysis/producer && python3 replay_producer.py --file ~/userbehavior_tianchi.csv --rate 0 --bootstrap 127.0.0.1:9092"
+cd /d D:\projects\flink-realtime-analysis
+wsl -e bash -c "cd /mnt/d/projects/flink-realtime-analysis/producer && python3 replay_producer.py --file ~/userbehavior_tianchi.csv --rate 0 --bootstrap 127.0.0.1:9092"
 ```
 
-（数据集已随仓库提供；`--rate 0` 为全速回放）
+（`--rate 0` 为全速回放。注意：数据集单文件约 3.4 GB，**未随仓库提供**，
+需按下方「示例数据集」一节的说明自行下载；若只是验证链路，也可用
+`producer/generate_dataset.py` 生成同格式的模拟数据。）
 
 ### 查看大屏
 
@@ -105,15 +107,22 @@ docker exec jobmanager flink run -c com.example.realtime.RealtimeAnalysisJob \
 
 ## 示例数据集
 
+> ⚠️ **数据文件未随仓库提供**：`.gitignore` 已排除 `data/*.csv`（单文件约 3.4 GB，不适合入库），
+> 克隆仓库后 `data/` 目录为空。
+
 | 文件 | 用途 | 说明 |
 |------|------|------|
 | `data/UserBehavior.csv` | 全链路实测 | **阿里天池淘宝用户行为公开数据集**（约 1 亿条真实脱敏行为记录，2017-11-25 至 12-03） |
 | `data/shopping.csv` | 关联规则示例 | 购物篮事务数据 |
 
+**数据获取**：UserBehavior 数据集来自阿里天池公开数据集
+<https://tianchi.aliyun.com/dataset/649>，下载后放到 `data/UserBehavior.csv` 即可。
+若拉不到真实数据，`producer/generate_dataset.py` 可生成同格式的模拟数据，用于跑通链路。
+
 > 数据集说明：UserBehavior 为阿里巴巴官方开源的真实脱敏数据（pv/cart/fav/buy 四类行为）。
 > 原始数据中混有少量脏时间戳记录（如 1902/2037 年），已在 Flink 解析层通过时间戳范围校验自动丢弃，
-> 校验逻辑见 `UserBehaviorDeserializer`。回放前需将数据复制到 WSL 家目录以获得更快的读取速度：
-> `wsl -e bash -c "cp /mnt/d/daimaxiangmu/flink-realtime-analysis/data/UserBehavior.csv ~/"`
+> 校验逻辑见 `UserBehaviorDeserializer`。回放前建议将数据复制到 WSL 家目录以获得更快的读取速度：
+> `wsl -e bash -c "cp /mnt/d/projects/flink-realtime-analysis/data/UserBehavior.csv ~/"`
 
 `producer/generate_dataset.py` 仍保留，用于在没有真实数据集时生成同格式的模拟数据。
 
