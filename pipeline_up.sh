@@ -18,7 +18,7 @@ RUNNING=$(curl -s --max-time 5 http://localhost:8081/jobs/overview | python3 -c 
 if [ "${RUNNING:-0}" -eq 0 ]; then
   echo "$(date '+%H:%M:%S') 提交 Flink 作业"
   nohup bin/flink run -c com.example.realtime.RealtimeAnalysisJob \
-      /mnt/d/daimaxiangmu/flink-realtime-analysis/flink-job/target/realtime-analysis-1.0.jar \
+      /mnt/d/projects/flink-realtime-analysis/flink-job/target/realtime-analysis-1.0.jar \
       --kafka 127.0.0.1:9092 --clickhouse 'jdbc:clickhouse://172.31.192.1:8124/rt' \
       > /tmp/submit.log 2>&1 &
   sleep 30
