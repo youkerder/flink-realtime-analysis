@@ -8,6 +8,22 @@ runtime/
 kafka_pull*.err
 flink_pull*.err
 
+# 本地运行产物（tools/ 下的排序数据、对账输出、编译产物）
+tools/*.csv
+tools/classes/
+tools/out_*
+tools/diff_report.txt
+tools/*.duckdb*
+
+# 本机备份目录
+.backup-*/
+
+# 智能体工作区（非项目内容）
+.workbuddy/
+
+# 个人材料（非项目内容，仅本地保留）
+docs/面试项目介绍与追问应答.md
+
 # Java 构建产物
 flink-job/target/
 *.class

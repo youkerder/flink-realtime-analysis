@@ -92,6 +92,15 @@ public class RealtimeAnalysisJob {
         String topic = params.get("topic", "user_behavior");
         String clickhouseUrl = params.get("clickhouse", "jdbc:clickhouse://localhost:8124/rt");
 
+        // 结果落地方式：
+        //   sink=jdbc（默认）：JdbcSink 直连 ClickHouse 服务端，生产形态；
+        //   sink=http       ：走 ClickHouse 的 HTTP + JSONEachRow 协议，用于本机没有
+        //                     ClickHouse 服务端（无 Docker/WSL）的场景，配合
+        //                     tools/ch_http_server.py 提供的本地兼容层。
+        // 两条路径的批量/重试语义一致，只有传输协议不同。
+        boolean useHttpSink = "http".equalsIgnoreCase(params.get("sink", "jdbc"));
+        String storeUrl = params.get("store", "http://127.0.0.1:8090/clickhouse/");
+
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         // Checkpoint 每 60 秒一次，EXACTLY_ONCE 语义：定期把算子状态和 Kafka 消费位点一起快照下来，
@@ -148,51 +157,63 @@ public class RealtimeAnalysisJob {
                 .process(new MetricsWindowProcess())
                 .name("metrics-1min");
 
-        // 指标结果写 ClickHouse。
+        // 指标结果写结果表。
         // 批量执行参数：攒够 1000 条或每 500 毫秒触发一次写入，最多重试 3 次。
         // 批量是为了减少往返开销；加时间上限是为了让数据不至于攒着不写、延迟过大。
-        metrics.addSink(JdbcSink.sink(
-                "INSERT INTO rt.metrics_1min (window_start, window_end, pv, uv, cart, fav, buy) VALUES (?,?,?,?,?,?,?)",
-                (ps, r) -> {
-                    ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
-                    ps.setTimestamp(2, Timestamp.from(Instant.ofEpochMilli(r.windowEnd)));
-                    ps.setLong(3, r.pv);
-                    ps.setLong(4, r.uv);
-                    ps.setLong(5, r.cart);
-                    ps.setLong(6, r.fav);
-                    ps.setLong(7, r.buy);
-                },
-                JdbcExecutionOptions.builder()
-                        .withBatchSize(1000)
-                        .withBatchIntervalMs(500)
-                        .withMaxRetries(3)
-                        .build(),
-                new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
-                        .withUrl(clickhouseUrl)
-                        .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
-                        .build()))
-                .name("clickhouse-metrics");
+        if (useHttpSink) {
+            metrics.map(RealtimeAnalysisJob::metricsToJson)
+                    .addSink(new HttpResultSink(storeUrl, "INSERT INTO rt.metrics_1min FORMAT JSONEachRow"))
+                    .name("store-metrics");
+        } else {
+            metrics.addSink(JdbcSink.sink(
+                    "INSERT INTO rt.metrics_1min (window_start, window_end, pv, uv, cart, fav, buy) VALUES (?,?,?,?,?,?,?)",
+                    (ps, r) -> {
+                        ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
+                        ps.setTimestamp(2, Timestamp.from(Instant.ofEpochMilli(r.windowEnd)));
+                        ps.setLong(3, r.pv);
+                        ps.setLong(4, r.uv);
+                        ps.setLong(5, r.cart);
+                        ps.setLong(6, r.fav);
+                        ps.setLong(7, r.buy);
+                    },
+                    JdbcExecutionOptions.builder()
+                            .withBatchSize(1000)
+                            .withBatchIntervalMs(500)
+                            .withMaxRetries(3)
+                            .build(),
+                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                            .withUrl(clickhouseUrl)
+                            .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+                            .build()))
+                    .name("clickhouse-metrics");
+        }
 
         // 漏斗：把一行 WindowResult 拆成三行 FunnelRow（pv / cart_fav / buy）再写库，
         // 这样 ClickHouse 里是"长表"结构，前端画漏斗图时按 stage 取值即可。
-        metrics.flatMap(new FunnelSplitter())
-                .addSink(JdbcSink.sink(
-                        "INSERT INTO rt.funnel_1min (window_start, stage, users) VALUES (?,?,?)",
-                        (ps, r) -> {
-                            ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
-                            ps.setString(2, r.stage);
-                            ps.setLong(3, r.users);
-                        },
-                        JdbcExecutionOptions.builder()
-                                .withBatchSize(1000)
-                                .withBatchIntervalMs(500)
-                                .withMaxRetries(3)
-                                .build(),
-                        new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
-                                .withUrl(clickhouseUrl)
-                                .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
-                                .build()))
-                .name("clickhouse-funnel");
+        SingleOutputStreamOperator<FunnelRow> funnel = metrics.flatMap(new FunnelSplitter());
+        if (useHttpSink) {
+            funnel.map(RealtimeAnalysisJob::funnelToJson)
+                    .addSink(new HttpResultSink(storeUrl, "INSERT INTO rt.funnel_1min FORMAT JSONEachRow"))
+                    .name("store-funnel");
+        } else {
+            funnel.addSink(JdbcSink.sink(
+                    "INSERT INTO rt.funnel_1min (window_start, stage, users) VALUES (?,?,?)",
+                    (ps, r) -> {
+                        ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
+                        ps.setString(2, r.stage);
+                        ps.setLong(3, r.users);
+                    },
+                    JdbcExecutionOptions.builder()
+                            .withBatchSize(1000)
+                            .withBatchIntervalMs(500)
+                            .withMaxRetries(3)
+                            .build(),
+                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                            .withUrl(clickhouseUrl)
+                            .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+                            .build()))
+                    .name("clickhouse-funnel");
+        }
 
         // ================= 分支二：每分钟商品热度 TopN =================
         // 先 keyBy(itemId) 聚合，把"每个商品在每个窗口内的行为次数"算出来。
@@ -215,27 +236,63 @@ public class RealtimeAnalysisJob {
                 .process(new TopNProcess(100))
                 .name("topn-per-minute");
 
-        topn.addSink(JdbcSink.sink(
-                "INSERT INTO rt.item_topn_1min (window_start, item_id, category_id, cnt) VALUES (?,?,?,?)",
-                (ps, r) -> {
-                    ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
-                    ps.setLong(2, r.itemId);
-                    ps.setLong(3, r.categoryId);
-                    ps.setLong(4, r.cnt);
-                },
-                JdbcExecutionOptions.builder()
-                        .withBatchSize(1000)
-                        .withBatchIntervalMs(500)
-                        .withMaxRetries(3)
-                        .build(),
-                new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
-                        .withUrl(clickhouseUrl)
-                        .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
-                        .build()))
-                .name("clickhouse-topn");
+        if (useHttpSink) {
+            topn.map(RealtimeAnalysisJob::topnToJson)
+                    .addSink(new HttpResultSink(storeUrl, "INSERT INTO rt.item_topn_1min FORMAT JSONEachRow"))
+                    .name("store-topn");
+        } else {
+            topn.addSink(JdbcSink.sink(
+                    "INSERT INTO rt.item_topn_1min (window_start, item_id, category_id, cnt) VALUES (?,?,?,?)",
+                    (ps, r) -> {
+                        ps.setTimestamp(1, Timestamp.from(Instant.ofEpochMilli(r.windowStart)));
+                        ps.setLong(2, r.itemId);
+                        ps.setLong(3, r.categoryId);
+                        ps.setLong(4, r.cnt);
+                    },
+                    JdbcExecutionOptions.builder()
+                            .withBatchSize(1000)
+                            .withBatchIntervalMs(500)
+                            .withMaxRetries(3)
+                            .build(),
+                    new JdbcConnectionOptions.JdbcConnectionOptionsBuilder()
+                            .withUrl(clickhouseUrl)
+                            .withDriverName("com.clickhouse.jdbc.ClickHouseDriver")
+                            .build()))
+                    .name("clickhouse-topn");
+        }
 
         // 提交执行图。没有这一行，前面所有算子都只是被"定义"，不会真正运行。
         env.execute("realtime-user-behavior-analysis");
+    }
+
+    // ==================================================================
+    // 结果行 → JSONEachRow（sink=http 时使用）
+    // 字段名与建表语句 / tools/ch_http_server.py 的 INSERT 列顺序保持一致；
+    // 时间统一按东八区格式化，避免 JVM/服务端时区不一致导致的 8 小时偏移。
+    // ==================================================================
+
+    private static final java.time.format.DateTimeFormatter TS_FMT =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                    .withZone(java.time.ZoneId.of("Asia/Shanghai"));
+
+    private static String ts(long epochMillis) {
+        return TS_FMT.format(Instant.ofEpochMilli(epochMillis));
+    }
+
+    static String metricsToJson(WindowResult r) {
+        return "{\"window_start\":\"" + ts(r.windowStart) + "\",\"window_end\":\"" + ts(r.windowEnd)
+                + "\",\"pv\":" + r.pv + ",\"uv\":" + r.uv + ",\"cart\":" + r.cart
+                + ",\"fav\":" + r.fav + ",\"buy\":" + r.buy + "}";
+    }
+
+    static String funnelToJson(FunnelRow r) {
+        return "{\"window_start\":\"" + ts(r.windowStart) + "\",\"stage\":\"" + r.stage
+                + "\",\"users\":" + r.users + "}";
+    }
+
+    static String topnToJson(TopNRow r) {
+        return "{\"window_start\":\"" + ts(r.windowStart) + "\",\"item_id\":" + r.itemId
+                + ",\"category_id\":" + r.categoryId + ",\"cnt\":" + r.cnt + "}";
     }
 
     // ==================================================================

@@ -73,6 +73,14 @@ flowchart LR
 
 ### 回放数据
 
+> ⚠️ **先排序再回放**：原始 CSV 的行序是按用户/随机打散的，而作业用
+> `forBoundedOutOfOrderness(5s)` 的事件时间语义，直接回放会让 96% 的记录被判为迟到丢弃
+> （实测保留率仅 3.94%）。回放前请先按事件时间排序：
+>
+> ```
+> python tools/sort_dataset.py --file data/UserBehavior.csv --out data/UserBehavior.sorted.csv
+> ```
+
 新开一个窗口：
 
 ```
@@ -104,6 +112,32 @@ docker exec jobmanager flink run -c com.example.realtime.RealtimeAnalysisJob \
 ```
 
 需要本机可访问 Docker Hub（或自行配置镜像加速）。
+
+### 形态 C：Windows 原生模式（无 Docker / 无 WSL）
+
+适用场景：Windows 机器上 Docker Desktop 起不来（例如 WSL 被禁用），又需要在本机演示完整链路。
+用 Kafka 原生进程 + Flink 本地模式 + 列存兼容层替代容器，**计算逻辑与大屏完全复用**，
+仅把结果落地从 `JdbcSink`（JDBC）换成 `HttpResultSink`（ClickHouse HTTP + JSONEachRow）。
+
+```
+# 1) 依赖：JDK 17+、Maven、Python 3.10+（pip install "kafka-python>=3.0" duckdb）
+# 2) 数据排序（只需一次，约 4 分钟）
+python tools/sort_dataset.py --file data/UserBehavior.csv --out tools/UserBehavior.sorted.csv
+
+# 3) 一键启动：Kafka → 兼容层+大屏(8090) → Flink 作业 → 回放 500 万条
+python tools/native_up.py --reset --replay 5000000
+```
+
+- 大屏：<http://localhost:8090>（兼容层与静态页同端口，天然无跨域，不需要 Nginx）
+- 写入统计：<http://localhost:8090/stats>
+- 日志：`runtime/logs/job.log`、`runtime/logs/shim.log`
+- 该模式保持前台运行，Ctrl+C 一次性停止全部组件；加 `--detach` 可后台运行
+
+> 结果落地实现：`tools/ch_http_server.py` 用 DuckDB（列存）承载 ClickHouse 的 HTTP 接口子集
+> （`?query=... FORMAT JSON`、`INSERT ... FORMAT JSONEachRow`、`TRUNCATE`），表结构与
+> `db/init.sql` 对齐，并用窗口主键 + `INSERT OR REPLACE` 做幂等（等价 ReplacingMergeTree）。
+> 详细定位过程、修复清单与验证数据见 [docs/本地运行修复说明.md](docs/本地运行修复说明.md)。
+
 
 ## 示例数据集
 

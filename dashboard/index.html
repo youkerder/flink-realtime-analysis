@@ -95,11 +95,15 @@ async function refresh() {
       tooltip: { trigger: 'item', formatter: '{b}: {c}' },
       series: [{
         type: 'funnel', left: '12%', width: '76%', top: 50, bottom: 20, sort: 'descending',
-        label: { color: '#0b1026', formatter: '{b}: {c}' },
+        // minSize/gap：窗口内"浏览 → 加购/收藏 → 购买"三个量级差异很大（通常是 7000 : 500 : 200），
+        // 不设最小高度的话后两层会被压成一条线、标签也挤到图表外面看不清。
+        minSize: '12%', gap: 4,
+        label: { color: '#ffffff', position: 'inside', formatter: '{b}: {c}' },
+        itemStyle: { borderWidth: 0 },
         data: [
-          { name: '浏览 pv', value: m['pv'] || 0 },
-          { name: '加购/收藏', value: m['cart_fav'] || 0 },
-          { name: '购买 buy', value: m['buy'] || 0 }
+          { name: '浏览 pv', value: m['pv'] || 0, itemStyle: { color: '#3f6fd8' } },
+          { name: '加购/收藏', value: m['cart_fav'] || 0, itemStyle: { color: '#38a169' } },
+          { name: '购买 buy', value: m['buy'] || 0, itemStyle: { color: '#d98c2b' } }
         ]
       }]
     });
