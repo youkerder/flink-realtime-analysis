@@ -35,7 +35,7 @@ flowchart LR
 | 转化漏斗 | 同一窗口内 浏览 → 加购/收藏 → 购买 三层用户去重交叉（同窗转化语义；如需会话级转化可放大窗口或改用 Flink CEP） | `rt.funnel_1min` |
 | 商品热度 TopN | 按商品 keyBy 聚合计数，窗口关闭事件定时器触发排序取 Top 100 | `rt.item_topn_1min` |
 
-## 技术要点（面试高频）
+## 技术要点
 
 - **事件时间语义**：Watermark 采用 `forBoundedOutOfOrderness(5s)` 处理乱序；`withIdleness(10s)` 解决分区数小于 Source 并行度时空闲子任务卡死全局 Watermark 的经典问题（本项目实测踩坑并修复）
 - **状态与容错**：Checkpoint EXACTLY_ONCE（60s 周期）、固定延迟重启策略；TopN 使用 Keyed MapState + 事件时间定时器，窗口关闭后清理
