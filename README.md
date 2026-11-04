@@ -163,22 +163,54 @@ python tools/native_up.py --reset --replay 5000000
 ## 项目结构
 
 ```
-├── docker-compose.yml        # 形态 B：全容器编排（Kafka/Flink/ClickHouse/Nginx）
-├── start-all.cmd             # 形态 A：一键启动（WSL Kafka+Flink + Docker ClickHouse/大屏）
-├── stop-all.cmd              # 一键停止
-├── flink-job/                # Flink 作业（Java 11 字节码）
+├── README.md                     # 项目说明（架构 / 指标口径 / 运行方式）
+├── .gitignore                    # 排除数据集、构建产物、运行日志
+├── docker-compose.yml            # 形态 B：Kafka + Flink + ClickHouse + Nginx 全容器编排
+├── start-all.cmd / stop-all.cmd  # 形态 A：Windows 侧一键启停（WSL 集群 + Docker 容器）
+├── start-all.sh                  # 形态 A：WSL 内的自愈锚点（探活重启 Kafka/Flink，收到 stop_flag 退出）
+├── stop-all.sh                   # WSL 内手工停止集群
+├── pipeline_up.sh                # 幂等拉起：Kafka → Flink → 无运行作业时才提交
+├── anchor.sh                     # 早期锚点脚本（已被 start-all.sh 取代）
+├── flink-supervisor.sh           # 早期守护脚本（仅探活重启）
+├── replay_tianchi.sh             # WSL 内全速回放天池数据
+├── replay_final.sh               # 限速 3 万条/s 回放（注意 topic 写的是 user_behavior_v2）
+├── pull-images.sh                # 多镜像源轮换拉取 Docker 镜像（国内网络）
+├── retry_pulls.sh                # 拉镜像断点重试
+├── flink-job/                    # Flink 作业（Java 11 字节码）
+│   ├── pom.xml                   # 依赖与 shade 打包配置
 │   └── src/main/java/com/example/realtime/
-│       ├── RealtimeAnalysisJob.java      # 主作业：窗口聚合 / 漏斗 / TopN / JDBC Sink
-│       ├── UserBehavior.java             # 事件 POJO
-│       └── UserBehaviorDeserializer.java # Kafka 消息解析（脏数据容错）
+│       ├── RealtimeAnalysisJob.java      # 主作业：水位线 / 窗口聚合 / 漏斗 / TopN / Sink
+│       ├── UserBehavior.java             # 事件 POJO（用户/商品/类目/行为/时间戳）
+│       ├── UserBehaviorDeserializer.java # Kafka 消息解析 + 脏数据过滤
+│       └── HttpResultSink.java           # ClickHouse HTTP 协议写入（无 Docker 环境用）
 ├── producer/
-│   ├── generate_dataset.py   # 多进程模拟数据生成器
-│   └── replay_producer.py    # 限速回放进 Kafka
-├── dashboard/                # ECharts 大屏 + Nginx 反代配置
-├── db/                       # ClickHouse 建表与用户配置
-├── data/                     # 数据文件（不入库）
-└── docs/                     # 大屏截图
+│   ├── replay_producer.py        # CSV → Kafka 限速回放器
+│   └── generate_dataset.py       # 同格式模拟数据生成器（多进程）
+├── dashboard/
+│   ├── index.html                # ECharts 实时大屏（5s 轮询）
+│   ├── echarts.min.js            # ECharts 5.6.0 本地库
+│   └── nginx.conf                # 静态站点 + /clickhouse/ 反代（规避跨域）
+├── db/
+│   ├── init.sql                  # 建库 rt + 三张 MergeTree 结果表
+│   └── noauth.xml                # ClickHouse 本地免密配置（仅演示）
+├── tools/                        # 验证与本地运行工具
+│   ├── native_up.py              # 无 Docker 一键启动（Kafka/兼容层/作业/回放）
+│   ├── ch_http_server.py         # ClickHouse HTTP 兼容层 + 大屏静态服务（DuckDB）
+│   ├── sort_dataset.py           # 按事件时间外部排序（回放前必做）
+│   ├── verify_dataset.py         # 全量扫描数据集：行数/脏数据/行为分布/窗口数
+│   ├── compare_windows.py        # 与离线口径逐窗口对账
+│   ├── JobLogicVerifier.java     # 复用作业算子做全量逻辑校验
+│   └── KafkaSourceVerifier.java  # 真实反序列化器消费 Kafka 的校验
+├── docs/
+│   ├── dashboard-demo.mp4        # 大屏运行录屏
+│   ├── dashboard-live.png        # 实时大屏截图
+│   ├── 本地运行修复说明.md        # 本机无法运行的定位与修复记录
+│   ├── 运行验证与问题排查报告.md  # 全量验证结论 + 问题清单
+│   └── 项目文件说明.md            # 每个文件的详细职责说明
+└── data/                         # 数据集（不入库）
 ```
+
+> 每个文件的**详细职责、所属链路环节、是否历史遗留**，见 [docs/项目文件说明.md](docs/项目文件说明.md)。
 
 ## 说明
 
